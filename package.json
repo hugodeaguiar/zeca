@@ -1,0 +1,14 @@
+{
+  "name": "zeca",
+  "version": "1.0.0",
+  "description": "Aplicativo para gerenciamento de dados financeiros",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
