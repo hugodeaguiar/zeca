@@ -72,6 +72,20 @@ const API = {
       return API.request(`/wallets/${id}`, {
         method: 'DELETE',
       });
+    },
+    async getShares(id) {
+      return API.request(`/wallets/${id}/shares`);
+    },
+    async addShare(id, email) {
+      return API.request(`/wallets/${id}/share`, {
+        method: 'POST',
+        body: JSON.stringify({ email })
+      });
+    },
+    async removeShare(id, userId) {
+      return API.request(`/wallets/${id}/share/${userId}`, {
+        method: 'DELETE'
+      });
     }
   },
 
@@ -446,12 +460,29 @@ function renderWalletsGrid() {
 
     const card = document.createElement('div');
     card.className = 'card glass wallet-card';
+    
+    let badgeHtml = `<span class="wallet-badge">${progressPercent.toFixed(0)}%</span>`;
+    let ownerHtml = '';
+    let actionsHtml = `
+      <div class="wallet-card-actions">
+        <button class="btn-card-edit" data-id="${w.id}"><svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:-1px; margin-right:4px;"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg> Editar</button>
+        <button class="btn-card-delete" data-id="${w.id}"><svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:-1px; margin-right:4px;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg> Excluir</button>
+      </div>
+    `;
+    
+    if (w.is_owner === 0) {
+      badgeHtml = `<span class="wallet-badge" style="background: var(--color-primary); color: white;">Compartilhada</span>`;
+      ownerHtml = `<p class="wallet-date" style="color: var(--color-primary); margin-bottom: 0.2rem;">Por: ${escapeHTML(w.owner_name)}</p>`;
+      actionsHtml = '';
+    }
+
     card.innerHTML = `
       <div class="wallet-card-header">
         <h2>${escapeHTML(w.name)}</h2>
-        <span class="wallet-badge">${progressPercent.toFixed(0)}%</span>
+        ${badgeHtml}
       </div>
       
+      ${ownerHtml}
       <p class="wallet-date">Prazo: ${formatDateBR(w.end_date)}</p>
       
       <div class="wallet-current-info">
@@ -468,10 +499,7 @@ function renderWalletsGrid() {
         <div class="progress-bar-fill ${progressColorClass}" style="width: ${progressPercent}%"></div>
       </div>
 
-      <div class="wallet-card-actions">
-        <button class="btn-card-edit" data-id="${w.id}"><svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:-1px; margin-right:4px;"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg> Editar</button>
-        <button class="btn-card-delete" data-id="${w.id}"><svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:-1px; margin-right:4px;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg> Excluir</button>
-      </div>
+      ${actionsHtml}
     `;
 
     // Clique no card abre os detalhes
@@ -481,16 +509,18 @@ function renderWalletsGrid() {
       showWalletDetails(w.id);
     });
 
-    // Eventos de Editar/Excluir
-    card.querySelector('.btn-card-edit').addEventListener('click', (e) => {
-      e.stopPropagation();
-      openWalletDialog(w);
-    });
+    // Eventos de Editar/Excluir (apenas para o dono)
+    if (w.is_owner !== 0) {
+      card.querySelector('.btn-card-edit').addEventListener('click', (e) => {
+        e.stopPropagation();
+        openWalletDialog(w);
+      });
 
-    card.querySelector('.btn-card-delete').addEventListener('click', (e) => {
-      e.stopPropagation();
-      confirmDeleteWallet(w);
-    });
+      card.querySelector('.btn-card-delete').addEventListener('click', (e) => {
+        e.stopPropagation();
+        confirmDeleteWallet(w);
+      });
+    }
 
     container.appendChild(card);
   });
@@ -513,10 +543,21 @@ async function showWalletDetails(walletId) {
     
     // Atualiza cabeçalhos
     document.getElementById('detail-wallet-name').innerText = wallet.name;
-    document.getElementById('detail-wallet-meta').innerText = `Meta: ${formatBRL(wallet.goal)} | Prazo: ${formatDateBR(wallet.end_date)}`;
+    document.getElementById('detail-wallet-meta').innerText = `Meta: ${formatBRL(wallet.goal)} | Prazo: ${formatDateBR(wallet.end_date)}${wallet.is_owner === 0 ? ' | Compartilhada' : ''}`;
     
-    // Ativa botão de edição atual
-    document.getElementById('btn-edit-wallet-current').onclick = () => openWalletDialog(wallet);
+    // Configuração de botões
+    const editBtn = document.getElementById('btn-edit-wallet-current');
+    const shareBtn = document.getElementById('btn-share-wallet');
+    
+    if (wallet.is_owner === 1) {
+      editBtn.style.display = 'inline-block';
+      editBtn.onclick = () => openWalletDialog(wallet);
+      shareBtn.style.display = 'inline-block';
+      shareBtn.onclick = () => openShareDialog(wallet);
+    } else {
+      editBtn.style.display = 'none';
+      shareBtn.style.display = 'none';
+    }
 
     // Cálculos de Resumo
     let totalApplied = 0;
@@ -911,6 +952,88 @@ document.getElementById('price-update-form').onsubmit = async (e) => {
   } catch (error) {
     showToast(error.message, 'danger');
   }
+};
+
+
+// ================= GESTÃO DE COMPARTILHAMENTO =================
+
+const shareDialog = document.getElementById('share-dialog');
+const shareForm = document.getElementById('share-form');
+const shareMembersUl = document.getElementById('share-members-ul');
+const btnCloseShare = document.getElementById('btn-close-share-dialog');
+
+async function openShareDialog(wallet) {
+  state.activeWalletId = wallet.id;
+  await loadSharesList();
+  shareDialog.showModal();
+}
+
+async function loadSharesList() {
+  try {
+    const shares = await API.wallets.getShares(state.activeWalletId);
+    shareMembersUl.innerHTML = '';
+    
+    if (shares.length === 0) {
+      shareMembersUl.innerHTML = '<li class="text-muted" style="text-align: center; font-size: 0.9rem;">Ninguém além de você tem acesso.</li>';
+    } else {
+      shares.forEach(user => {
+        const li = document.createElement('li');
+        li.style.display = 'flex';
+        li.style.justifyContent = 'space-between';
+        li.style.alignItems = 'center';
+        li.style.padding = '0.5rem';
+        li.style.background = 'rgba(255,255,255,0.05)';
+        li.style.borderRadius = '8px';
+        
+        li.innerHTML = `
+          <div>
+            <strong>${escapeHTML(user.name)}</strong><br>
+            <small class="text-muted">${escapeHTML(user.email)}</small>
+          </div>
+          <button class="btn-table-action delete" title="Revogar acesso" onclick="revokeShare(${user.id})">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+          </button>
+        `;
+        shareMembersUl.appendChild(li);
+      });
+    }
+  } catch (error) {
+    showToast('Erro ao carregar membros.', 'danger');
+  }
+}
+
+shareForm.onsubmit = async (e) => {
+  e.preventDefault();
+  if (!shareForm.checkValidity()) {
+    shareForm.querySelectorAll('input[required]').forEach(syncAria);
+    return;
+  }
+  
+  const email = document.getElementById('share-email').value.trim();
+  try {
+    await API.wallets.addShare(state.activeWalletId, email);
+    showToast('Carteira compartilhada com sucesso!');
+    shareForm.reset();
+    await loadSharesList();
+  } catch (error) {
+    showToast(error.message, 'danger');
+  }
+};
+
+window.revokeShare = async (userId) => {
+  if (!confirm('Deseja realmente revogar o acesso deste usuário?')) return;
+  try {
+    await API.wallets.removeShare(state.activeWalletId, userId);
+    showToast('Acesso revogado.');
+    await loadSharesList();
+  } catch (error) {
+    showToast(error.message, 'danger');
+  }
+};
+
+btnCloseShare.onclick = () => {
+  shareDialog.close();
+  shareForm.reset();
 };
 
 

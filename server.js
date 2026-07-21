@@ -1,5 +1,6 @@
 import express from 'express';
 import { DatabaseSync } from 'node:sqlite';
+import crypto from 'node:crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -50,9 +51,33 @@ db.exec(`
   );
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS wallet_shares (
+    wallet_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    PRIMARY KEY (wallet_id, user_id),
+    FOREIGN KEY (wallet_id) REFERENCES wallets(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+`);
+
 // Middlewares
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Helpers de Autorização
+function hasWalletAccess(walletId, userId) {
+  const wallet = db.prepare('SELECT id FROM wallets WHERE id = ? AND user_id = ?').get(walletId, userId);
+  if (wallet) return true; // owner
+  
+  const share = db.prepare('SELECT wallet_id FROM wallet_shares WHERE wallet_id = ? AND user_id = ?').get(walletId, userId);
+  return !!share; // shared member
+}
+
+function isWalletOwner(walletId, userId) {
+  const wallet = db.prepare('SELECT id FROM wallets WHERE id = ? AND user_id = ?').get(walletId, userId);
+  return !!wallet;
+}
 
 // Middleware de Autenticação
 function requireAuth(req, res, next) {
@@ -103,8 +128,13 @@ app.post('/api/auth/register', (req, res) => {
       return res.status(400).json({ error: 'Este e-mail já está cadastrado.' });
     }
 
+    // Criptografa a senha
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.scryptSync(password.trim(), salt, 64).toString('hex');
+    const hashedPassword = `${salt}:${hash}`;
+
     const stmt = db.prepare('INSERT INTO users (name, email, password) VALUES (?, ?, ?)');
-    const result = stmt.run(name.trim(), email.trim(), password.trim());
+    const result = stmt.run(name.trim(), email.trim(), hashedPassword);
     
     const userId = Number(result.lastInsertRowid);
     res.status(201).json({
@@ -134,9 +164,25 @@ app.post('/api/auth/login', (req, res) => {
       return res.status(400).json({ error: 'Usuário não encontrado.' });
     }
 
-    // A senha é obrigatória e deve bater
-    if (!user.password || password.trim() !== user.password) {
+    // Validação da senha criptografada
+    if (!user.password) {
       return res.status(400).json({ error: 'Senha incorreta para esta conta.' });
+    }
+
+    if (user.password.includes(':') && user.password.split(':')[0].length === 32) {
+      const [salt, key] = user.password.split(':');
+      const hashedBuffer = crypto.scryptSync(password.trim(), salt, 64);
+      const keyBuffer = Buffer.from(key, 'hex');
+      
+      const match = hashedBuffer.length === keyBuffer.length && crypto.timingSafeEqual(hashedBuffer, keyBuffer);
+      if (!match) {
+        return res.status(400).json({ error: 'Senha incorreta para esta conta.' });
+      }
+    } else {
+      // Fallback para senhas não migradas (se houver alguma que escapou da migração)
+      if (password.trim() !== user.password) {
+        return res.status(400).json({ error: 'Senha incorreta para esta conta.' });
+      }
     }
 
     res.json({
@@ -157,11 +203,20 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
 
 // --- ROTAS DE CARTEIRAS (WALLETS) ---
 
-// Obter todas as carteiras do usuário
+// Obter todas as carteiras do usuário (próprias e compartilhadas)
 app.get('/api/wallets', requireAuth, (req, res) => {
   try {
-    const stmt = db.prepare('SELECT * FROM wallets WHERE user_id = ? ORDER BY id DESC');
-    const wallets = stmt.all(req.user.id);
+    const stmt = db.prepare(`
+      SELECT w.*, 
+             (w.user_id = ?) as is_owner,
+             u.name as owner_name
+      FROM wallets w
+      JOIN users u ON w.user_id = u.id
+      WHERE w.user_id = ? 
+         OR w.id IN (SELECT wallet_id FROM wallet_shares WHERE user_id = ?)
+      ORDER BY w.id DESC
+    `);
+    const wallets = stmt.all(req.user.id, req.user.id, req.user.id);
     res.json(wallets);
   } catch (error) {
     console.error('Erro ao listar carteiras:', error);
@@ -190,7 +245,8 @@ app.post('/api/wallets', requireAuth, (req, res) => {
       name: name.trim(),
       end_date: end_date || null,
       goal: parseFloat(goal),
-      user_id: req.user.id
+      user_id: req.user.id,
+      is_owner: 1
     });
   } catch (error) {
     console.error('Erro ao criar carteira:', error);
@@ -198,61 +254,44 @@ app.post('/api/wallets', requireAuth, (req, res) => {
   }
 });
 
-// Editar carteira
+// Editar carteira (apenas dono)
 app.put('/api/wallets/:id', requireAuth, (req, res) => {
   const walletId = parseInt(req.params.id, 10);
   const { name, end_date, goal } = req.body;
 
-  if (isNaN(walletId)) {
-    return res.status(400).json({ error: 'ID da carteira inválido.' });
-  }
-  if (!name || !name.trim()) {
-    return res.status(400).json({ error: 'O nome da carteira é obrigatório.' });
-  }
+  if (isNaN(walletId)) return res.status(400).json({ error: 'ID da carteira inválido.' });
+  if (!name || !name.trim()) return res.status(400).json({ error: 'O nome da carteira é obrigatório.' });
   if (goal === undefined || goal === null || isNaN(parseFloat(goal)) || parseFloat(goal) < 0) {
     return res.status(400).json({ error: 'A meta financeira deve ser um valor positivo.' });
   }
 
   try {
-    // Verifica propriedade
-    const wallet = db.prepare('SELECT id FROM wallets WHERE id = ? AND user_id = ?').get(walletId, req.user.id);
-    if (!wallet) {
-      return res.status(404).json({ error: 'Carteira não encontrada.' });
+    if (!isWalletOwner(walletId, req.user.id)) {
+      return res.status(403).json({ error: 'Apenas o dono da carteira pode realizar esta ação.' });
     }
 
-    const stmt = db.prepare('UPDATE wallets SET name = ?, end_date = ?, goal = ? WHERE id = ? AND user_id = ?');
-    stmt.run(name.trim(), end_date || null, parseFloat(goal), walletId, req.user.id);
+    const stmt = db.prepare('UPDATE wallets SET name = ?, end_date = ?, goal = ? WHERE id = ?');
+    stmt.run(name.trim(), end_date || null, parseFloat(goal), walletId);
 
-    res.json({
-      id: walletId,
-      name: name.trim(),
-      end_date: end_date || null,
-      goal: parseFloat(goal),
-      user_id: req.user.id
-    });
+    res.json({ id: walletId, name: name.trim(), end_date: end_date || null, goal: parseFloat(goal), user_id: req.user.id, is_owner: 1 });
   } catch (error) {
     console.error('Erro ao editar carteira:', error);
     res.status(500).json({ error: 'Erro ao editar carteira.' });
   }
 });
 
-// Excluir carteira
+// Excluir carteira (apenas dono)
 app.delete('/api/wallets/:id', requireAuth, (req, res) => {
   const walletId = parseInt(req.params.id, 10);
-
-  if (isNaN(walletId)) {
-    return res.status(400).json({ error: 'ID da carteira inválido.' });
-  }
+  if (isNaN(walletId)) return res.status(400).json({ error: 'ID da carteira inválido.' });
 
   try {
-    // Verifica propriedade
-    const wallet = db.prepare('SELECT id FROM wallets WHERE id = ? AND user_id = ?').get(walletId, req.user.id);
-    if (!wallet) {
-      return res.status(404).json({ error: 'Carteira não encontrada.' });
+    if (!isWalletOwner(walletId, req.user.id)) {
+      return res.status(403).json({ error: 'Apenas o dono da carteira pode excluí-la.' });
     }
 
-    const stmt = db.prepare('DELETE FROM wallets WHERE id = ? AND user_id = ?');
-    stmt.run(walletId, req.user.id);
+    const stmt = db.prepare('DELETE FROM wallets WHERE id = ?');
+    stmt.run(walletId);
 
     res.json({ message: 'Carteira e todos os seus ativos associados foram removidos com sucesso!' });
   } catch (error) {
@@ -262,33 +301,115 @@ app.delete('/api/wallets/:id', requireAuth, (req, res) => {
 });
 
 
+// --- ROTAS DE COMPARTILHAMENTO DE CARTEIRAS ---
+
+// Listar quem tem acesso à carteira
+app.get('/api/wallets/:id/shares', requireAuth, (req, res) => {
+  const walletId = parseInt(req.params.id, 10);
+  if (isNaN(walletId)) return res.status(400).json({ error: 'ID da carteira inválido.' });
+
+  try {
+    if (!isWalletOwner(walletId, req.user.id)) {
+      return res.status(403).json({ error: 'Acesso negado. Apenas o dono pode gerenciar compartilhamentos.' });
+    }
+
+    const stmt = db.prepare(`
+      SELECT u.id, u.name, u.email 
+      FROM users u
+      JOIN wallet_shares ws ON u.id = ws.user_id
+      WHERE ws.wallet_id = ?
+    `);
+    const shares = stmt.all(walletId);
+    res.json(shares);
+  } catch (error) {
+    console.error('Erro ao listar compartilhamentos:', error);
+    res.status(500).json({ error: 'Erro interno ao listar compartilhamentos.' });
+  }
+});
+
+// Compartilhar carteira com um email
+app.post('/api/wallets/:id/share', requireAuth, (req, res) => {
+  const walletId = parseInt(req.params.id, 10);
+  const { email } = req.body;
+
+  if (isNaN(walletId)) return res.status(400).json({ error: 'ID da carteira inválido.' });
+  if (!email || !email.trim()) return res.status(400).json({ error: 'O e-mail é obrigatório.' });
+
+  try {
+    if (!isWalletOwner(walletId, req.user.id)) {
+      return res.status(403).json({ error: 'Acesso negado. Apenas o dono pode compartilhar a carteira.' });
+    }
+
+    // Busca usuário pelo e-mail
+    const targetUser = db.prepare('SELECT id, name, email FROM users WHERE email = ?').get(email.trim());
+    if (!targetUser) {
+      return res.status(404).json({ error: 'Nenhum usuário cadastrado com este e-mail.' });
+    }
+    if (targetUser.id === req.user.id) {
+      return res.status(400).json({ error: 'Você não pode compartilhar a carteira consigo mesmo.' });
+    }
+
+    // Verifica se já está compartilhado
+    const existing = db.prepare('SELECT user_id FROM wallet_shares WHERE wallet_id = ? AND user_id = ?').get(walletId, targetUser.id);
+    if (existing) {
+      return res.status(400).json({ error: 'Esta carteira já está compartilhada com este usuário.' });
+    }
+
+    const stmt = db.prepare('INSERT INTO wallet_shares (wallet_id, user_id) VALUES (?, ?)');
+    stmt.run(walletId, targetUser.id);
+
+    res.status(201).json({ message: 'Carteira compartilhada com sucesso!', user: targetUser });
+  } catch (error) {
+    console.error('Erro ao compartilhar carteira:', error);
+    res.status(500).json({ error: 'Erro interno ao compartilhar carteira.' });
+  }
+});
+
+// Remover compartilhamento
+app.delete('/api/wallets/:id/share/:userId', requireAuth, (req, res) => {
+  const walletId = parseInt(req.params.id, 10);
+  const targetUserId = parseInt(req.params.userId, 10);
+
+  if (isNaN(walletId) || isNaN(targetUserId)) return res.status(400).json({ error: 'IDs inválidos.' });
+
+  try {
+    if (!isWalletOwner(walletId, req.user.id)) {
+      return res.status(403).json({ error: 'Acesso negado. Apenas o dono pode remover compartilhamentos.' });
+    }
+
+    const stmt = db.prepare('DELETE FROM wallet_shares WHERE wallet_id = ? AND user_id = ?');
+    stmt.run(walletId, targetUserId);
+
+    res.json({ message: 'Acesso revogado com sucesso.' });
+  } catch (error) {
+    console.error('Erro ao remover compartilhamento:', error);
+    res.status(500).json({ error: 'Erro interno ao remover compartilhamento.' });
+  }
+});
+
+
 // --- ROTAS DE ATIVOS (ASSETS) ---
 
-// Obter ativos (opcionalmente filtrando por carteira)
+// Obter ativos
 app.get('/api/assets', requireAuth, (req, res) => {
   const walletId = req.query.wallet_id ? parseInt(req.query.wallet_id, 10) : null;
 
   try {
     if (walletId) {
-      // Valida propriedade da carteira
-      const wallet = db.prepare('SELECT id FROM wallets WHERE id = ? AND user_id = ?').get(walletId, req.user.id);
-      if (!wallet) {
+      if (!hasWalletAccess(walletId, req.user.id)) {
         return res.status(403).json({ error: 'Acesso negado para esta carteira.' });
       }
-      
       const stmt = db.prepare('SELECT * FROM assets WHERE wallet_id = ? ORDER BY id DESC');
-      const assets = stmt.all(walletId);
-      return res.json(assets);
+      res.json(stmt.all(walletId));
     } else {
-      // Retorna todos os ativos de todas as carteiras do usuário
       const stmt = db.prepare(`
         SELECT a.* FROM assets a
         JOIN wallets w ON a.wallet_id = w.id
-        WHERE w.user_id = ?
+        WHERE w.user_id = ? 
+           OR w.id IN (SELECT wallet_id FROM wallet_shares WHERE user_id = ?)
         ORDER BY a.id DESC
       `);
-      const assets = stmt.all(req.user.id);
-      return res.json(assets);
+      res.json(stmt.all(req.user.id, req.user.id));
     }
   } catch (error) {
     console.error('Erro ao listar ativos:', error);
@@ -299,57 +420,35 @@ app.get('/api/assets', requireAuth, (req, res) => {
 // Criar novo ativo
 app.post('/api/assets', requireAuth, (req, res) => {
   const { name, bank, price, updated_price, created_date, expiration_date, wallet_id } = req.body;
+  const wId = parseInt(wallet_id, 10);
 
-  if (!name || !name.trim()) {
-    return res.status(400).json({ error: 'O nome do ativo é obrigatório.' });
-  }
-  if (!bank || !bank.trim()) {
-    return res.status(400).json({ error: 'O banco emissor/custodiante é obrigatório.' });
-  }
-  if (price === undefined || price === null || isNaN(parseFloat(price)) || parseFloat(price) < 0) {
-    return res.status(400).json({ error: 'O preço inicial deve ser um valor positivo.' });
-  }
-  if (updated_price === undefined || updated_price === null || isNaN(parseFloat(updated_price)) || parseFloat(updated_price) < 0) {
-    return res.status(400).json({ error: 'O preço atualizado deve ser um valor positivo.' });
-  }
-  if (!created_date || !created_date.trim()) {
-    return res.status(400).json({ error: 'A data de criação é obrigatória.' });
-  }
-  if (!wallet_id || isNaN(parseInt(wallet_id, 10))) {
-    return res.status(400).json({ error: 'ID de carteira inválido.' });
-  }
+  if (!name || !name.trim()) return res.status(400).json({ error: 'O nome do ativo é obrigatório.' });
+  if (!bank || !bank.trim()) return res.status(400).json({ error: 'O banco emissor/custodiante é obrigatório.' });
+  if (price === undefined || isNaN(parseFloat(price)) || parseFloat(price) < 0) return res.status(400).json({ error: 'Preço inicial inválido.' });
+  if (updated_price === undefined || isNaN(parseFloat(updated_price)) || parseFloat(updated_price) < 0) return res.status(400).json({ error: 'Preço atualizado inválido.' });
+  if (!created_date || !created_date.trim()) return res.status(400).json({ error: 'A data de criação é obrigatória.' });
+  if (isNaN(wId)) return res.status(400).json({ error: 'ID de carteira inválido.' });
 
   try {
-    // Valida se a carteira pertence ao usuário logado
-    const wallet = db.prepare('SELECT id FROM wallets WHERE id = ? AND user_id = ?').get(parseInt(wallet_id, 10), req.user.id);
-    if (!wallet) {
-      return res.status(404).json({ error: 'Carteira não encontrada ou não pertencente ao usuário.' });
+    if (!hasWalletAccess(wId, req.user.id)) {
+      return res.status(403).json({ error: 'Acesso negado para esta carteira.' });
     }
 
     const stmt = db.prepare(`
       INSERT INTO assets (name, bank, price, updated_price, created_date, expiration_date, wallet_id)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    const result = stmt.run(
-      name.trim(),
-      bank.trim(),
-      parseFloat(price),
-      parseFloat(updated_price),
-      created_date.trim(),
-      expiration_date || null,
-      parseInt(wallet_id, 10)
-    );
+    const result = stmt.run(name.trim(), bank.trim(), parseFloat(price), parseFloat(updated_price), created_date.trim(), expiration_date || null, wId);
 
-    const assetId = Number(result.lastInsertRowid);
     res.status(201).json({
-      id: assetId,
+      id: Number(result.lastInsertRowid),
       name: name.trim(),
       bank: bank.trim(),
       price: parseFloat(price),
       updated_price: parseFloat(updated_price),
       created_date: created_date.trim(),
       expiration_date: expiration_date || null,
-      wallet_id: parseInt(wallet_id, 10)
+      wallet_id: wId
     });
   } catch (error) {
     console.error('Erro ao criar ativo:', error);
@@ -362,34 +461,16 @@ app.put('/api/assets/:id', requireAuth, (req, res) => {
   const assetId = parseInt(req.params.id, 10);
   const { name, bank, price, updated_price, created_date, expiration_date } = req.body;
 
-  if (isNaN(assetId)) {
-    return res.status(400).json({ error: 'ID de ativo inválido.' });
-  }
-  if (!name || !name.trim()) {
-    return res.status(400).json({ error: 'O nome do ativo é obrigatório.' });
-  }
-  if (!bank || !bank.trim()) {
-    return res.status(400).json({ error: 'O banco emissor/custodiante é obrigatório.' });
-  }
-  if (price === undefined || price === null || isNaN(parseFloat(price)) || parseFloat(price) < 0) {
-    return res.status(400).json({ error: 'O preço inicial deve ser um valor positivo.' });
-  }
-  if (updated_price === undefined || updated_price === null || isNaN(parseFloat(updated_price)) || parseFloat(updated_price) < 0) {
-    return res.status(400).json({ error: 'O preço atualizado deve ser um valor positivo.' });
-  }
-  if (!created_date || !created_date.trim()) {
-    return res.status(400).json({ error: 'A data de criação é obrigatória.' });
-  }
+  if (isNaN(assetId)) return res.status(400).json({ error: 'ID de ativo inválido.' });
+  if (!name || !name.trim()) return res.status(400).json({ error: 'O nome do ativo é obrigatório.' });
+  if (!bank || !bank.trim()) return res.status(400).json({ error: 'O banco emissor/custodiante é obrigatório.' });
+  if (price === undefined || isNaN(parseFloat(price)) || parseFloat(price) < 0) return res.status(400).json({ error: 'Preço inicial inválido.' });
+  if (updated_price === undefined || isNaN(parseFloat(updated_price)) || parseFloat(updated_price) < 0) return res.status(400).json({ error: 'Preço atualizado inválido.' });
+  if (!created_date || !created_date.trim()) return res.status(400).json({ error: 'A data de criação é obrigatória.' });
 
   try {
-    // Valida se o ativo pertence a alguma carteira do usuário logado
-    const asset = db.prepare(`
-      SELECT a.id, a.wallet_id FROM assets a
-      JOIN wallets w ON a.wallet_id = w.id
-      WHERE a.id = ? AND w.user_id = ?
-    `).get(assetId, req.user.id);
-
-    if (!asset) {
+    const asset = db.prepare('SELECT wallet_id FROM assets WHERE id = ?').get(assetId);
+    if (!asset || !hasWalletAccess(asset.wallet_id, req.user.id)) {
       return res.status(404).json({ error: 'Ativo não encontrado ou permissão negada.' });
     }
 
@@ -398,25 +479,11 @@ app.put('/api/assets/:id', requireAuth, (req, res) => {
       SET name = ?, bank = ?, price = ?, updated_price = ?, created_date = ?, expiration_date = ?
       WHERE id = ?
     `);
-    stmt.run(
-      name.trim(),
-      bank.trim(),
-      parseFloat(price),
-      parseFloat(updated_price),
-      created_date.trim(),
-      expiration_date || null,
-      assetId
-    );
+    stmt.run(name.trim(), bank.trim(), parseFloat(price), parseFloat(updated_price), created_date.trim(), expiration_date || null, assetId);
 
     res.json({
-      id: assetId,
-      name: name.trim(),
-      bank: bank.trim(),
-      price: parseFloat(price),
-      updated_price: parseFloat(updated_price),
-      created_date: created_date.trim(),
-      expiration_date: expiration_date || null,
-      wallet_id: asset.wallet_id
+      id: assetId, name: name.trim(), bank: bank.trim(), price: parseFloat(price), updated_price: parseFloat(updated_price),
+      created_date: created_date.trim(), expiration_date: expiration_date || null, wallet_id: asset.wallet_id
     });
   } catch (error) {
     console.error('Erro ao editar ativo:', error);
@@ -427,20 +494,11 @@ app.put('/api/assets/:id', requireAuth, (req, res) => {
 // Excluir ativo
 app.delete('/api/assets/:id', requireAuth, (req, res) => {
   const assetId = parseInt(req.params.id, 10);
-
-  if (isNaN(assetId)) {
-    return res.status(400).json({ error: 'ID de ativo inválido.' });
-  }
+  if (isNaN(assetId)) return res.status(400).json({ error: 'ID de ativo inválido.' });
 
   try {
-    // Valida se o ativo pertence a alguma carteira do usuário logado
-    const asset = db.prepare(`
-      SELECT a.id FROM assets a
-      JOIN wallets w ON a.wallet_id = w.id
-      WHERE a.id = ? AND w.user_id = ?
-    `).get(assetId, req.user.id);
-
-    if (!asset) {
+    const asset = db.prepare('SELECT wallet_id FROM assets WHERE id = ?').get(assetId);
+    if (!asset || !hasWalletAccess(asset.wallet_id, req.user.id)) {
       return res.status(404).json({ error: 'Ativo não encontrado ou permissão negada.' });
     }
 
@@ -455,7 +513,7 @@ app.delete('/api/assets/:id', requireAuth, (req, res) => {
 });
 
 
-// Serve a SPA para qualquer outra rota (para suporte a histórico se necessário, ou fallback)
+// Serve a SPA
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
