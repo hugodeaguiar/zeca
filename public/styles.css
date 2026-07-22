@@ -358,6 +358,10 @@ input:user-invalid + .error-msg, select:user-invalid + .error-msg {
   min-height: 100vh;
 }
 
+.app-screen > * {
+  min-width: 0;
+}
+
 /* Sidebar (Desktop) */
 .sidebar {
   display: flex;
@@ -601,6 +605,10 @@ input:user-invalid + .error-msg, select:user-invalid + .error-msg {
   grid-template-columns: 1fr 1.5fr;
   gap: 1.5rem;
   align-items: start;
+}
+
+.dashboard-grid > * {
+  min-width: 0;
 }
 
 .card-header {
