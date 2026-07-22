@@ -1,7 +1,7 @@
 {
   "name": "zeca",
-  "version": "1.0.1",
-  "description": "Aplicativo para gerenciamento de dados financeiros",
+  "version": "1.0.2",
+  "description": "Gestão de Carteiras e Ativos",
   "main": "server.js",
   "type": "module",
   "scripts": {
