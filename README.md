@@ -4,10 +4,6 @@ Zeca é uma aplicação web de gestão de ativos e carteiras financeiras, desenv
 
 ![Página inicial](screenshots/home.png)
 
-![Carteiras](screenshots/carteiras.png)
-
-![Ativos](screenshots/ativos.png)
-
 ## Funcionalidades
 
 - **Múltiplas Carteiras**: Crie e acompanhe metas financeiras independentes.
