@@ -33,22 +33,28 @@ Este projeto foi construído para ser leve, rápido e não possuir milhares de d
    cd zeca
    ```
 
-2. Instale as dependências:
+2. Usando o Docker
+
+   ```bash
+   docker-compose up
+   ```
+
+3. Instale as dependências (Se não usar o Docker):
    ```bash
    npm install
    ```
 
-3. (Apenas em cenários de migração) Se você estiver atualizando de uma versão anterior com senhas em texto puro, rode a migração:
+4. (Apenas em cenários de migração) Se você estiver atualizando de uma versão anterior com senhas em texto puro, rode a migração:
    ```bash
    node scripts/migrate_passwords.js
    ```
 
-4. Inicie o servidor:
+5. Inicie o servidor (Se não usar o Docker):
    ```bash
    npm run dev
    ```
 
-5. Acesse no navegador:
+6. Acesse no navegador:
    ```text
    http://localhost:3000
    ```
