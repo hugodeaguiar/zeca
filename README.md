@@ -80,4 +80,4 @@ Se você deseja contribuir para o Zeca, sinta-se livre para abrir um *Pull Reque
 
 ## 📄 Licença
 
-Distribuído sob a licença MIT. Veja o arquivo `LICENSE` para mais detalhes.
+Distribuído sob a licença GNU GPLv3. Veja o arquivo `LICENSE` para mais detalhes.
