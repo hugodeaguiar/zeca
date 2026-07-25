@@ -63,7 +63,7 @@ db.exec(`
 
 // Middlewares
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 // Helpers de Autorização
 function hasWalletAccess(walletId, userId) {
@@ -513,9 +513,22 @@ app.delete('/api/assets/:id', requireAuth, (req, res) => {
 });
 
 
-// Serve a SPA
-app.get('*', (req, res) => {
+// Rota raiz explícita
+app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Rotas não encontradas (API ou frontend) → 404
+app.use((req, res) => {
+  const isApiRoute = req.originalUrl.startsWith('/api/');
+  if (isApiRoute) {
+    return res.status(404).json({ error: `Rota não encontrada: ${req.method} ${req.originalUrl}` });
+  }
+  res.status(404).sendFile(path.join(__dirname, 'public', '404.html'), (err) => {
+    if (err) {
+      res.status(404).send('<h1>404 – Página não encontrada</h1>');
+    }
+  });
 });
 
 // Inicia o servidor

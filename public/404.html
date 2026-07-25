@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>404 – Página não encontrada | Zeca</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-main: #F8FAFC;
+      --primary: #4F46E5;
+      --primary-dark: #3b379d;
+      --text-main: #0F172A;
+      --text-muted: #64748B;
+      --font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --radius: 12px;
+      --transition: 0.3s ease;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font-family);
+      background: var(--bg-main);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 2rem;
+    }
+    .code {
+      font-size: 8rem;
+      font-weight: 800;
+      line-height: 1;
+      background: linear-gradient(90deg, #818cf8, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 1rem;
+    }
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+    }
+    p {
+      font-size: 1rem;
+      color: var(--text-muted);
+      max-width: 400px;
+      line-height: 1.6;
+      margin-bottom: 2rem;
+    }
+    a {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.85rem 2rem;
+      border-radius: var(--radius);
+      font-weight: 600;
+      font-size: 1rem;
+      text-decoration: none;
+      background: var(--primary);
+      color: #fff;
+      transition: background var(--transition);
+      min-width: 160px;
+    }
+    a:hover { background: var(--primary-dark); }
+  </style>
+</head>
+<body>
+  <div class="code">404</div>
+  <h1>Página não encontrada</h1>
+  <p>A página que você tentou acessar não existe ou foi removida.</p>
+  <a href="/">Voltar para o início</a>
+</body>
+</html>
