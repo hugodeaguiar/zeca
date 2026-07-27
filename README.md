@@ -17,14 +17,14 @@ Zeca é uma aplicação web de gestão de ativos e carteiras financeiras, desenv
 Este projeto foi construído para ser leve, rápido e não possuir milhares de dependências (Zero-Dependencies Frontend e Backend enxuto).
 
 - **Frontend**: Vanilla JavaScript (ES6+), HTML5 Semântico e CSS3 puro.
-- **Backend**: [Node.js](https://nodejs.org) v23+.
+- **Backend**: [Node.js](https://nodejs.org) v24+.
 - **Framework Web**: [Express.js](https://expressjs.com/).
-- **Banco de Dados**: [SQLite Nativo (`node:sqlite`)](https://nodejs.org/api/sqlite.html) integrado nativamente no Node.js v23+, sem necessidade de compilação ou pacotes binários externos como `sqlite3`.
+- **Banco de Dados**: [SQLite Nativo (`node:sqlite`)](https://nodejs.org/api/sqlite.html) integrado nativamente no Node.js v24+, sem necessidade de compilação ou pacotes binários externos como `sqlite3`.
 
 ## Como Instalar e Rodar Localmente
 
 ### Pré-requisitos
-- **Node.js** v23.7.0 ou superior (Devido à utilização da lib nativa `node:sqlite`).
+- **Node.js** v24.x ou superior (Devido à utilização da lib nativa `node:sqlite`).
 
 ### Passos
 1. Clone o repositório:

@@ -1,6 +1,6 @@
 # Dockerfile
 # Build image for Zeca application
-FROM node:23-alpine
+FROM node:24-alpine
 
 # Set working directory
 WORKDIR /app
