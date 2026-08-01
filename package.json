@@ -1,6 +1,6 @@
 {
   "name": "zeca",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Gestão de Carteiras e Ativos",
   "main": "server.js",
   "type": "module",
